@@ -1,4 +1,4 @@
-# DevOps Documentation: Jenkins Job Enhancement & Ansible Refactoring
+# Jenkins Job Enhancement & Ansible Refactoring
 
 ## Step 1 – Jenkins Job Enhancement
 
