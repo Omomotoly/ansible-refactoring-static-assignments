@@ -55,7 +55,7 @@ sudo mkdir /home/ubuntu/ansible-config-artifact
 
 ## Step 2 – Refactor Ansible Code by Importing Other Playbooks into `site.yml`
 
-Prior to refactoring, the latest code is pulled down from the `main` branch, and a new working branch named `refactor` is created[cite: 3]. Refactoring allows complex playbook tasks to be broken down into modular components, avoiding cluttered and heavily commented files[cite: 3, 4].
+Prior to refactoring, the latest code is pulled down from the `main` branch, and a new working branch named `refactor` is created. Refactoring allows complex playbook tasks to be broken down into modular components, avoiding cluttered and heavily commented files.
 
 1. Inside the `playbooks` directory, a new file named `site.yml` is created to serve as the main entry point for the entire infrastructure configuration.
 git fetch
