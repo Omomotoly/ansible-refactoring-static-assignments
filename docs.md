@@ -489,19 +489,6 @@ Once execution finishes, verify that both `Web1-UAT` and `Web2-UAT` respond in a
 
 ---
 
-### Verification of Idempotency
-
-To verify that the implementation is fully idempotent, the playbook was executed a second time without altering any underlying files or server configurations.
-
-The task output for every step returned `ok`, culminating in a final recap showing `changed=0` across all hosts:
-
-![Screenshot](images/idempotencyproof.png)
-
-
-This confirms that Ansible makes zero state modifications when the actual infrastructure state matches the desired configuration.
-
----
-
 ## Conclusion
 
 This project successfully refactored the Ansible codebase into a modular, maintainable architecture leveraging roles and static assignments. By breaking monolithic playbook logic into isolated role tasks under `roles/webserver/` and importing them via `playbooks/site.yml`, the environment can now scale efficiently across diverse infrastructure stages.
