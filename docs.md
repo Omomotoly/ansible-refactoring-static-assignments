@@ -28,14 +28,27 @@ sudo mkdir /home/ubuntu/ansible-config-artifact
 6. The main idea of save_artifacts project is to save artifacts into /home/ubuntu/ansible-config-artifact directory. To achieve this, create a Build step and choose Copy artifacts from other project, specify ansible as a source project and /home/ubuntu/ansible-config-artifact as a target directory ![Screenshot](images/5.png) ![Screenshot](images/6.png) 
 7. Test the set up by making some change in README.MD file inside the ansible-config-mgt repository.![Screenshot](images/7.png)
 
-* **Issue**: The Jenkins artifact copy build failed with a java.nio.file.AccessDeniedException while attempting to access the target directory at /home/ubuntu/ansible-config-artifact. This happened because despite the target directory having 777 permissions (drwxrwxrwx), the jenkins user was blocked by the parent /home/ubuntu directory's 750 permissions (drwxr-x---),
+* **Issue:** The Jenkins build failed with a `java.nio.file.AccessDeniedException` when trying to save the artifact to `/home/ubuntu/ansible-config-artifact`. Even though the target folder had wide-open permissions (`777`), the Jenkins user was getting blocked because the parent `/home/ubuntu` folder was locked down with `750` permissions and belonged to the `ubuntu` user. 
 
-* **Solution** This was fixed by running the following command to grant traversal rights: 
-```bash
-sudo chmod o+x /home/ubuntu 
-```
-![Screenshot](images/8.png)
+* **Solution:** To get it working safely, I reassigned the target folder to the Jenkins user and gave safe traverse access on the parent `/home/ubuntu` folder so Jenkins could pass through.
+
+  1. Assign ownership to the jenkins user and group
+
+  ```bash
+  sudo chown -R jenkins:jenkins /home/ubuntu/ansible-config-artifact
+  ```
+  2. Give traverse rights on the parent home directory so Jenkins can cross the boundary
+  ```bash
+  sudo chmod o+x /home/ubuntu
+  ```
+  3. Set secure 750 permissions on the target directory
+  ```bash
+  sudo chmod 750 /home/ubuntu/ansible-config-artifact
+  ```
+  ![Screenshot](images/8.png)
+
 * **Result**: The next trigger resulted in a successful 'save_artifacts' build.
+
 ![Screenshot](images/9.png)
 
 ---
@@ -362,34 +375,108 @@ ansible-playbook -i inventory/uat.ini playbooks/site.yml
 ```
 NOTE: Before running the playbook, ensure you have tunneled into your Jenkins-Ansible server via ssh-agent
 
----
-
-Here is the updated documentation with the chronological order adjusted so that the initial diagnostic check comes first to establish the server's local state, followed by the configuration resolution and verification:
+## Issue 1: Default Index Mismatch
 
 ---
 
-### Issue 1: Default Index Mismatch
+### Part 1: Initial Manual Configuration & Troubleshooting
 
 * **Issue:** Apache was configured to look for `index.html` by default, but the web root directory (`/var/www/html`) only contained `.php` files, resulting in a `403 Forbidden` error.
 ![Screenshot](images/38.png)
 
 * **Initial Diagnostic Check:** Tested locally using `curl -i http://localhost`, which successfully returned `HTTP/1.1 200 OK`, confirming the Apache service was running locally.
-* **Resolution:** Updated the `DirectoryIndex` directive in `/etc/httpd/conf/httpd.conf` to include `index.php`. 
+* **Manual Resolution:** Manually edited the Apache configuration file (`/etc/httpd/conf/httpd.conf`) to update the `DirectoryIndex` directive to prioritize `index.php`. 
 ![Screenshot](images/39.png)
 
 Verified syntax using `sudo httpd -t` and restarted the service with `sudo systemctl restart httpd`.
-* **Results:** Apache successfully identified `index.php` as the default landing page.
+* **Results:** Apache successfully identified `index.php` as the default landing page, resolving the 403 error for the local instance.
 
 ---
 
-### Issue 2: External Network Connection Timeout
+### Part 2: Automated Solution
+
+* **The Problem with Manual Fixes:** While manual editing resolves the immediate error, it violates core IaC principles. Newly provisioned UAT servers would lack this manual adjustment and fail with the same `403 Forbidden` error.
+* **Automated Resolution:** To eliminate manual server intervention, the following configuration fix were added directly into the Ansible `webserver` role.
+  ```yaml
+  nano roles/webserver/tasks/main.yml
+  ```
+  * **PHP Runtime Provisioning:** Uses `ansible.builtin.yum` to install `php`, `php-mysqlnd`, `php-fpm`, and `php-json` so fresh stock servers can execute PHP application code.
+Add this task to roles/webserver/tasks/main.yml, insert the block below right after the install apache task:
+
+  ```yaml
+  - name: install php and required modules
+    become: true
+    ansible.builtin.yum:
+      name:
+        - php
+        - php-mysqlnd
+        - php-fpm
+        - php-json
+      state: present
+    notify: restart httpd
+  ```
+  * **Apache Configuration Management:** Implemented the `ansible.builtin.lineinfile` module to programmatically configure the `DirectoryIndex` directive in `/etc/httpd/conf/httpd.conf`:
+
+  ```yaml
+  ---
+  - name: Ensure DirectoryIndex prioritizes index.php in Apache configuration
+    ansible.builtin.lineinfile:
+      path: /etc/httpd/conf/httpd.conf
+      regexp: '^(\s*DirectoryIndex\s+)'
+      line: 'DirectoryIndex index.php index.html'
+      state: present
+    become: true
+    notify: restart httpd
+
+  ```
+  ![Screenshot](images/40a.png)
+  ![Screenshot](images/40b.png)
+
+
+* **Handler (`roles/webserver/handlers/main.yml`):** Configured a handler to restart Apache conditionally only when the configuration file changes:
+
+  ```yaml
+  nano roles/webserver/handlers/main.yml
+
+  ```
+  ```yaml
+  - name: restart httpd
+    ansible.builtin.service:
+      name: httpd
+      state: restarted
+    become: true
+
+  ```
+  ![Screenshot](images/41.png)
+
+Now run the playbook
+
+```bash
+ansible-playbook -i inventory/uat.ini playbooks/site.yml
+```
+![Screenshot](images/42.png)
+
+Re-run the playbook to prove idempotency
+
+![Screenshot](images/43.png)
+
+After the task was updated with the php and dependencies installation block, below is the visual display of the run and rerun to prove idempotence: 
+
+![Screenshot](images/44.png)
+![Screenshot](images/45.png)
+
+* **Results:** Ansible now automatically and idempotently updates the configuration file on any target deployment, ensuring that Apache prioritizes `index.php` without requiring any manual server adjustments.
+---
+---
+
+## Issue 2: External Network Connection Timeout
 
 * **Issue:** Incoming web traffic on port 80 was blocked at the network level, preventing external access while local server requests succeeded.
 * **Error Message:** `ERR_CONNECTION_TIMED_OUT` ("took too long to respond") in the browser / `curl: Failed to connect to port 80: Connection timed out` when running `curl -i http://<public-ip>`.
 * **Resolution:** Opened the AWS EC2 console and added an inbound security group rule for HTTP traffic on Port 80 (`0.0.0.0/0`).
 * **Results:** External requests from the browser and remote clients successfully reached the EC2 instance and loaded the application.
 ---
-### Issue 3: Browser Protocol Mismatch
+## Issue 3: Browser Protocol Mismatch
 
 * **Issue:** The web browser automatically attempted to secure the connection using an unconfigured protocol(https).
 * **Error Message:** Connection refused / site cannot be reached via HTTPS.
@@ -419,13 +506,8 @@ This confirms that Ansible makes zero state modifications when the actual infras
 
 This project successfully refactored the Ansible codebase into a modular, maintainable architecture leveraging roles and static assignments. By breaking monolithic playbook logic into isolated role tasks under `roles/webserver/` and importing them via `playbooks/site.yml`, the environment can now scale efficiently across diverse infrastructure stages.
 
-Key outcomes included:
+The Ansible architecture now looks like this:
+![Screenshot](images/refactor-architecture.png)
 
-* **Pipeline Integration:** Validated automated webhook deployment via Jenkins to streamline configuration delivery from GitHub to the Ansible controller.
-* **Defensive Task Design:** Identified and resolved a source repository misconfiguration during initial testing.
-* **Idempotency Standards:** Replaced non-idempotent shell execution paths with checksum-aware modules (`ansible.builtin.copy`), guaranteeing predictable convergence on repeated runs.
-* **Least-Privilege Security:** Standardized control node permissions to `750` with `jenkins:jenkins` ownership rather than permissive `0777` access models.
 
-```
 
-```
